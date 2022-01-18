@@ -167,10 +167,6 @@ void set_sensor_crash_cause(char *str)
 	} else {
 		pr_info("is not sensor crash =%s\n", str);
 	}
-
-#ifdef CONFIG_OPLUS_FEATURE_FEEDBACK
-	oplus_kevent_fb(FB_SENSOR, SENSOR_STABILITY_TYPE, payload);
-#endif
 }
 EXPORT_SYMBOL(set_sensor_crash_cause);
 
@@ -430,9 +426,6 @@ static int parse_shr_info(struct sensor_fb_cxt *sensor_fb_cxt)
 				sensor_fb_cxt->fb_smem.event[count].count,
 				detail_buff);
 		pr_info("payload =%s\n", payload);
-#ifdef CONFIG_OPLUS_FEATURE_FEEDBACK
-		oplus_kevent_fb(FB_SENSOR, g_fb_conf[index].fb_event_id, payload);
-#endif
 	}
 
 	return ret;
@@ -484,9 +477,6 @@ int read_sleep_ratio(struct sensor_fb_cxt *sensor_fb_cxt, int status)
 				adsp_sleep_ratio_fied,
 				count,
 				sensor_fb_cxt->sleep_ratio);
-#ifdef CONFIG_OPLUS_FEATURE_FEEDBACK
-			oplus_kevent_fb(FB_SENSOR, SENSOR_POWER_TYPE, payload);
-#endif
 		}
 
 	} else {

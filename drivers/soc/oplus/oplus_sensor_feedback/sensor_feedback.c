@@ -276,7 +276,6 @@ static int parse_shr_info(struct sensor_fb_cxt *sensor_fb_cxt)
 				g_fb_conf[index].fb_field,
 				detail_buff);
 		pr_info("payload =%s\n", payload);
-		oplus_kevent_fb(FB_SENSOR, g_fb_conf[index].fb_field, payload);
 	}
 
 	return ret;

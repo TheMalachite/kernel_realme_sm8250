@@ -11,14 +11,6 @@
 #include <linux/err.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
-#ifdef CONFIG_OPLUS_KEVENT_UPLOAD
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
-#include <../../../arch/arm64/kernel/secureguard/rootguard/oplus_kevent.h>
-#else
-#include <linux/oplus_kevent.h>
-#endif
-#endif
 #include <soc/oplus/system/kernel_fb.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
@@ -67,12 +59,6 @@ static unsigned int fb_event_id[FB_MAX + 1] = {
 	710,
 	0,
 };
-
-#ifdef CONFIG_OPLUS_KEVENT_UPLOAD
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) && !IS_ENABLED(CONFIG_OPLUS_KERNEL_SECURE_GUARD)
-int kevent_send_to_user(struct kernel_packet_info *userinfo) {return 0;}
-#endif
-#endif
 
 static struct packet * package_alloc(
 	fb_tag tag_id, const char *event_id, unsigned char *payload)
@@ -126,43 +112,6 @@ static void package_release(struct packet *packet)
 	}
 }
 
-int oplus_kevent_fb(fb_tag tag_id, const char *event_id, unsigned char *payload)
-{
-	struct packet *packet;
-	unsigned long flags;
-	int ret = 0;
-
-	/*ignore before wlock init*/
-	if (!g_pkts->wlock_init) {
-		return -ENODEV;
-        }
-
-	packet = package_alloc(tag_id, event_id, payload);
-	if (!packet) {
-		return -ENODEV;
-        }
-
-	ret = kevent_send_to_user(packet->pkt);
-	if (!ret) {
-		goto exit;
-        }
-
-	if (ret > 0) {
-		spin_lock_irqsave(&g_pkts->wlock, flags);
-		list_add(&packet->list, &g_pkts->packets);
-		spin_unlock_irqrestore(&g_pkts->wlock, flags);
-
-		wake_up_process(g_pkts->flush_task);
-		return 0;
-	}
-
-exit:
-	package_release(packet);
-
-	return 0;
-}
-
-
 #define CAUSENAME_SIZE 128
 
 static unsigned int BKDRHash(char *str, unsigned int len)
@@ -181,19 +130,6 @@ static unsigned int BKDRHash(char *str, unsigned int len)
 	}
 
 	return hash;
-}
-
-int oplus_kevent_fb_str(fb_tag tag_id, const char *event_id, unsigned char *str)
-{
-	unsigned char payload[100] = "";
-	unsigned int hashid;
-	int ret = 0;
-	char strHashSource[CAUSENAME_SIZE];
-	strncpy(strHashSource, str, strlen(str));
-	hashid = BKDRHash(strHashSource, strlen(strHashSource));
-	scnprintf(payload, sizeof(payload), "NULL$$EventID@@%d$$EventData@@%d$$PackageName@@%s$$fid@@%u", fb_event_id[tag_id], ret, _tag[tag_id], hashid);
-	pr_err("payload =%s\n", payload);
-	return oplus_kevent_fb(tag_id, event_id, payload);
 }
 
 /*thread to deal with the buffer list*/
@@ -218,19 +154,6 @@ static int fb_flush_thread(void *arg)
 		spin_unlock_irqrestore(&pkts_pool->wlock, flags);
 
 		list_for_each_entry_safe(s, tmp, &list_tmp, list) {
-			if (s->pkt) {
-				if (kevent_send_to_user(s->pkt) && s->retry) {
-					pr_debug("failed to send feedback %s\n", s->pkt->log_tag);
-					s->retry--;
-					spin_lock_irqsave(&pkts_pool->wlock, flags);
-					list_add(&s->list, &pkts_pool->packets);
-					spin_unlock_irqrestore(&pkts_pool->wlock, flags);
-				} else {
-					package_release(s);
-				}
-
-				msleep(20);
-			}
 		}
 	}
 
@@ -286,8 +209,6 @@ static ssize_t kernel_fb_write(struct file *file,
 
 	memcpy(event_id, &r_buf[idx1], idx2-idx1-1 > MAX_ID?MAX_ID: idx2-idx1-1);
 	event_id[MAX_ID - 1] = '\0';
-
-	oplus_kevent_fb(tag_id, event_id, r_buf + idx2);
 
 exit:
 

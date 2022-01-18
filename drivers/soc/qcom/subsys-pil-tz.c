@@ -887,9 +887,6 @@ static void log_failure_reason(const struct pil_tz_data *d)
 	//#ifdef OPLUS_FEATURE_SENSOR
 	//tangjh@PSW.BSP.SENSOR ,2020/07/27 add for slpi/adsp crash reason
 	set_subsys_crash_cause(reason);
-	if(strncmp(name, "slpi", strlen("slpi")) == 0){
-		oplus_kevent_fb_str(FB_SENSOR, FB_SENSOR_ID_CRASH, reason);
-	}
 	//#endif
 	pr_err("%s subsystem failure reason: %s.\n", name, reason);
 
