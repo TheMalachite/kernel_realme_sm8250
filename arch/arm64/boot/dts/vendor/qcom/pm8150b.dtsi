@@ -418,6 +418,23 @@
 				qcom,hw-settle-time = <200>;
 				qcom,pre-scaling = <1 1>;
 			};
+			//#ifdef OPLUS_FEATURE_CHG_BASIC /* Jianchao.Shi@BSP.CHG.Basic, 2016/12/26, sjc Add for charging */
+			usb_temp_adc {
+				reg = <ADC_AMUX_THM4_PU2>;
+				label = "usb_temp_adc";
+				qcom,pre-scaling = <1 1>;
+				qcom,ratiometric;
+				qcom,hw-settle-time = <200>;
+			};
+			// #endif
+			/*xing.xiong@BSP.Kernel.Driver, 2019/09/10, Add for adc read for aboard*/
+			board_id {
+				reg = <ADC_GPIO1>;
+				label = "board_id_vdata";
+				qcom,ratiometric;
+				qcom,pre-scaling = <1 1>;
+			};
+
 		};
 
 		pm8150b_adc_tm: adc_tm@3500 {
