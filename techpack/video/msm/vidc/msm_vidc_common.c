@@ -693,6 +693,25 @@ enum multi_stream msm_comm_get_stream_output_mode(struct msm_vidc_inst *inst)
 		return HAL_VIDEO_DECODER_PRIMARY;
 }
 
+bool vidc_scalar_enabled(struct msm_vidc_inst *inst)
+{
+    struct v4l2_format *f;
+    u32 output_height, output_width, input_height, input_width;
+    bool scalar_enable = false;
+
+    f = &inst->fmts[OUTPUT_PORT].v4l2_fmt;
+    output_height = f->fmt.pix_mp.height;
+    output_width = f->fmt.pix_mp.width;
+    f = &inst->fmts[INPUT_PORT].v4l2_fmt;
+    input_height = f->fmt.pix_mp.height;
+    input_width = f->fmt.pix_mp.width;
+
+    if (output_height != input_height || output_width != input_width)
+            scalar_enable = true;
+
+    return scalar_enable;
+}
+
 bool is_single_session(struct msm_vidc_inst *inst, u32 ignore_flags)
 {
 	bool single = true;
@@ -4727,27 +4746,40 @@ int msm_comm_qbuf(struct msm_vidc_inst *inst, struct msm_vidc_buffer *mbuf)
 		return -EINVAL;
 	}
 
+	mutex_lock(&inst->registeredbufs.lock);
 	if (inst->state != MSM_VIDC_START_DONE) {
 		mbuf->flags |= MSM_VIDC_FLAG_DEFERRED;
+		mutex_unlock(&inst->registeredbufs.lock);
 		print_vidc_buffer(VIDC_HIGH, "qbuf deferred", inst, mbuf);
 		return 0;
 	}
 
+	mbuf->flags &= ~MSM_VIDC_FLAG_DEFERRED;
+	if (mbuf->flags & MSM_VIDC_FLAG_QUEUED) {
+		mutex_unlock(&inst->registeredbufs.lock);
+		print_vidc_buffer(VIDC_HIGH, "qbuf queued", inst, mbuf);
+		return 0;
+	}
+	mbuf->flags |= MSM_VIDC_FLAG_QUEUED;
+	mutex_unlock(&inst->registeredbufs.lock);
 	do_bw_calc = mbuf->vvb.vb2_buf.type == INPUT_MPLANE;
 	rc = msm_comm_scale_clocks_and_bus(inst, do_bw_calc);
 	if (rc)
 		s_vpr_e(inst->sid, "%s: scale clock & bw failed\n", __func__);
-
+	mutex_lock(&inst->registeredbufs.lock);
 	print_vidc_buffer(VIDC_HIGH|VIDC_PERF, "qbuf", inst, mbuf);
 	ctrl = get_ctrl(inst, V4L2_CID_MPEG_VIDC_SUPERFRAME);
-	if (ctrl->val)
+	if (ctrl->val) {
 		rc = msm_comm_qbuf_superframe_to_hfi(inst, mbuf);
-	else
+	}
+	else {
 		rc = msm_comm_qbuf_to_hfi(inst, mbuf);
+	}
 	if (rc)
 		s_vpr_e(inst->sid, "%s: Failed qbuf to hfi: %d\n",
 			__func__, rc);
 
+	mutex_unlock(&inst->registeredbufs.lock);
 	return rc;
 }
 

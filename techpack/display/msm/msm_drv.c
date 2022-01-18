@@ -48,6 +48,11 @@
 #include "sde_wb.h"
 #include "sde_dbg.h"
 
+#ifdef OPLUS_FEATURE_ADFR
+/* CaiHuiyue@MULTIMEDIA, 2020/10/22, oplus adfr */
+#include "oplus_adfr.h"
+#endif
+
 /*
  * MSM driver version:
  * - 1.0.0 - initial interface
@@ -367,6 +372,12 @@ static int msm_drm_uninit(struct device *dev)
 			priv->event_thread[i].thread = NULL;
 		}
 	}
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	if (oplus_adfr_is_support()) {
+		oplus_adfr_thread_destroy(priv);
+	}
+#endif
 
 	drm_kms_helper_poll_fini(ddev);
 
@@ -638,6 +649,20 @@ static int msm_drm_display_thread_create(struct sched_param param,
 		priv->pp_event_thread = NULL;
 		return ret;
 	}
+
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/10/15, fake frame */
+	/**
+	 * Use a seperate adfr thread for fake frame.
+	 * Because fake frame maybe causes crtc commit/event more heavy.
+	 * This can lead to commit miss TE/retire event delay
+	 */
+	if (oplus_adfr_is_support()) {
+		if (oplus_adfr_thread_create(&param, priv, ddev, dev)) {
+			return -EINVAL;
+		}
+	}
+#endif
 
 	return 0;
 
@@ -1616,6 +1641,30 @@ int msm_ioctl_power_ctrl(struct drm_device *dev, void *data,
 	return rc;
 }
 
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+// Pixelworks@MULTIMEDIA.DISPLAY, 2020/06/02, Iris5 Feature
+static int msm_ioctl_iris_operate_conf(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	int ret = -EINVAL;
+	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_kms *kms = priv->kms;
+
+	ret = kms->funcs->iris5_operate(kms, DRM_MSM_IRIS_OPERATE_CONF, data);
+	return ret;
+}
+
+static int msm_ioctl_iris_operate_tool(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	int ret = -EINVAL;
+	struct msm_drm_private *priv = dev->dev_private;
+	struct msm_kms *kms = priv->kms;
+
+	ret = kms->funcs->iris5_operate(kms, DRM_MSM_IRIS_OPERATE_TOOL, data);
+	return ret;
+}
+#endif // OPLUS_FEATURE_PXLW_IRIS5
 static const struct drm_ioctl_desc msm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(MSM_GEM_NEW,      msm_ioctl_gem_new,      DRM_AUTH|DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(MSM_GEM_CPU_PREP, msm_ioctl_gem_cpu_prep, DRM_AUTH|DRM_RENDER_ALLOW),
@@ -1629,6 +1678,11 @@ static const struct drm_ioctl_desc msm_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(MSM_RMFB2, msm_ioctl_rmfb2, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MSM_POWER_CTRL, msm_ioctl_power_ctrl,
 			DRM_RENDER_ALLOW),
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+// Pixelworks@MULTIMEDIA.DISPLAY, 2020/06/02, Iris5 Feature
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_CONF, msm_ioctl_iris_operate_conf, DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(MSM_IRIS_OPERATE_TOOL, msm_ioctl_iris_operate_tool, DRM_UNLOCKED),
+#endif
 };
 
 static const struct vm_operations_struct vm_ops = {

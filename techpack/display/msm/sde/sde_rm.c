@@ -2216,6 +2216,8 @@ int sde_rm_reserve(
 	 *       be discarded if in test-only mode.
 	 * If reservation is successful, and we're not in test-only, then we
 	 * replace the current with the next.
+	 * Poll for rsvp_nxt clear, allow the check_only commit if rsvp_nxt
+	 * gets cleared and bailout if it does not get cleared before timeout.
 	 */
 	rsvp_nxt = kzalloc(sizeof(*rsvp_nxt), GFP_KERNEL);
 	if (!rsvp_nxt) {

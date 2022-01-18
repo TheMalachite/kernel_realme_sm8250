@@ -9,6 +9,13 @@
 #include "sde_core_irq.h"
 #include "sde_formats.h"
 #include "sde_trace.h"
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+#include "../../iris/dsi_iris5_api.h"
+#endif
+#ifdef OPLUS_FEATURE_ADFR
+/* CaiHuiyue@MULTIMEDIA, 2020/10/22, oplus adfr */
+#include "oplus_adfr.h"
+#endif
 
 #define SDE_DEBUG_CMDENC(e, fmt, ...) SDE_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -24,6 +31,13 @@
 	container_of(x, struct sde_encoder_phys_cmd, base)
 
 #define PP_TIMEOUT_MAX_TRIALS	4
+
+#ifdef OPLUS_BUG_STABILITY
+/*Hujie@PSW.MM.Display.Lcd.Stability, 2019-09-01, add for runing SDE_RECOVERY_HARD_RESET when pingpong timeout many times*/
+#define PP_TIMEOUT_BAD_TRIALS   10
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+extern int oplus_dimlayer_fingerprint_failcount;
+#endif
 
 /*
  * Tearcheck sync start and continue thresholds are empirically found
@@ -196,6 +210,14 @@ static void sde_encoder_phys_cmd_pp_tx_done_irq(void *arg, int irq_idx)
 	SDE_EVT32_IRQ(DRMID(phys_enc->parent),
 			phys_enc->hw_pp->idx - PINGPONG_0, event);
 
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		atomic_set(&phys_enc->frame_state, 1);
+		SDE_DEBUG("frame_state = %d\n", atomic_read(&phys_enc->frame_state));
+	}
+#endif
+
 	/* Signal any waiting atomic commit thread */
 	wake_up_all(&phys_enc->pending_kickoff_wq);
 	SDE_ATRACE_END("pp_done_irq");
@@ -235,9 +257,23 @@ static void sde_encoder_phys_cmd_te_rd_ptr_irq(void *arg, int irq_idx)
 	struct sde_hw_pp_vsync_info info[MAX_CHANNELS_PER_ENC] = {{0}};
 	struct sde_encoder_phys_cmd_te_timestamp *te_timestamp;
 	unsigned long lock_flags;
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	static unsigned long now;
+#endif
 
 	if (!phys_enc || !phys_enc->hw_pp || !phys_enc->hw_intf)
 		return;
+
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	// The initial value of the now variable is 0,
+	// but we don't care about the first calculation error.
+	if (oplus_adfr_is_support()) {
+		SDE_DEBUG("rd_ptr_irq interval: %lu\n", ((unsigned long)ktime_to_us(ktime_get()) - now));
+		now = (unsigned long)ktime_to_us(ktime_get());
+	}
+#endif
 
 	SDE_ATRACE_BEGIN("rd_ptr_irq");
 	cmd_enc = to_sde_encoder_phys_cmd(phys_enc);
@@ -268,6 +304,22 @@ static void sde_encoder_phys_cmd_te_rd_ptr_irq(void *arg, int irq_idx)
 		phys_enc->parent_ops.handle_vblank_virt(phys_enc->parent,
 			phys_enc);
 
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		if(atomic_read(&phys_enc->frame_state) == 1) {
+			atomic_set(&phys_enc->frame_state, 0);
+		}
+		SDE_DEBUG("frame_state = %d\n", atomic_read(&phys_enc->frame_state));
+
+		/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/01, Add for auto on cmd filter */
+		if (oplus_adfr_auto_on_cmd_filter_get()) {
+			/* when the rd_ptr_irq comes there is no need to filter auto on cmd anymore */
+			oplus_adfr_auto_on_cmd_filter_set(false);
+		}
+	}
+#endif /* OPLUS_FEATURE_ADFR */
+
 	atomic_add_unless(&cmd_enc->pending_vblank_cnt, -1, 0);
 	wake_up_all(&cmd_enc->pending_vblank_wq);
 	SDE_ATRACE_END("rd_ptr_irq");
@@ -279,6 +331,10 @@ static void sde_encoder_phys_cmd_wr_ptr_irq(void *arg, int irq_idx)
 	struct sde_hw_ctl *ctl;
 	u32 event = 0;
 	struct sde_hw_pp_vsync_info info[MAX_CHANNELS_PER_ENC] = {{0}};
+#ifdef OPLUS_FEATURE_ADFR
+	static u64 now;
+	u64 interval;
+#endif
 
 	if (!phys_enc || !phys_enc->hw_ctl)
 		return;
@@ -301,6 +357,22 @@ static void sde_encoder_phys_cmd_wr_ptr_irq(void *arg, int irq_idx)
 		ctl->idx - CTL_0, event,
 		info[0].pp_idx, info[0].intf_idx, info[0].wr_ptr_line_count,
 		info[1].pp_idx, info[1].intf_idx, info[1].wr_ptr_line_count);
+
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		atomic_set(&phys_enc->frame_state, 2);
+		SDE_DEBUG("frame_state = %d\n", atomic_read(&phys_enc->frame_state));
+
+		/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/26, add for qsync tearing issue debug */
+		interval = (u64)ktime_to_us(ktime_get()) - now;
+		SDE_DEBUG("wr_ptr_irq interval: %llu\n", interval);
+		if (interval < 13600) {
+			SDE_DEBUG("kVRR wr_ptr_irq is too close, interval: %llu\n", interval);
+		}
+		now = (u64)ktime_to_us(ktime_get());
+	}
+#endif
 
 	/* Signal any waiting wr_ptr start interrupt */
 	wake_up_all(&phys_enc->pending_kickoff_wq);
@@ -503,6 +575,12 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 	/* decrement the kickoff_cnt before checking for ESD status */
 	if (!atomic_add_unless(&phys_enc->pending_kickoff_cnt, -1, 0))
 		return 0;
+
+#ifdef OPLUS_BUG_STABILITY
+/*Hujie@PSW.MM.Display.Lcd.Stability, 2019-09-01, add for runing SDE_RECOVERY_HARD_RESET when pingpong timeout many times*/
+	if (cmd_enc->pp_timeout_report_cnt >= PP_TIMEOUT_BAD_TRIALS)
+		return -EFAULT;
+#endif
 
 	cmd_enc->pp_timeout_report_cnt++;
 	pending_kickoff_cnt = atomic_read(&phys_enc->pending_kickoff_cnt) + 1;
@@ -937,6 +1015,15 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc,
 	mode = &phys_enc->cached_mode;
 	qsync_mode = sde_connector_get_qsync_mode(conn);
 
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		SDE_ATRACE_BEGIN("get_tearcheck_threshold");
+		SDE_ATRACE_INT("qsync_mode", qsync_mode);
+		SDE_ATRACE_INT("qsync_minfps", sde_connector_get_qsync_dynamic_min_fps(conn));
+	}
+#endif
+
 	if (mode && (qsync_mode == SDE_RM_QSYNC_CONTINUOUS_MODE)) {
 		u32 qsync_min_fps = 0;
 		u32 default_fps = mode->vrefresh;
@@ -950,6 +1037,18 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc,
 		if (phys_enc->parent_ops.get_qsync_fps)
 			phys_enc->parent_ops.get_qsync_fps(
 				phys_enc->parent, &qsync_min_fps);
+
+#ifdef OPLUS_FEATURE_ADFR
+		/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+		if (oplus_adfr_is_support()) {
+			qsync_min_fps = sde_connector_get_qsync_dynamic_min_fps(conn);
+			SDE_DEBUG_CMDENC(cmd_enc,
+				"qsync updated: %u, mode: %u, min fps:%u, default:%u\n",
+				sde_connector_is_qsync_updated(conn),
+				qsync_mode,
+				qsync_min_fps, default_fps);
+		}
+#endif
 
 		if (!qsync_min_fps || !default_fps || !yres) {
 			SDE_ERROR_CMDENC(cmd_enc,
@@ -974,6 +1073,25 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc,
 		total_extra_lines = extra_time_ns / default_line_time_ns;
 		threshold_lines += total_extra_lines;
 
+#ifdef OPLUS_FEATURE_ADFR
+		/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/26, correct the AP window setting to be less than the DDIC window */
+		if (oplus_adfr_is_support()) {
+			if (qsync_min_fps == 51) {
+				if (yres > 3216) {
+					threshold_lines = threshold_lines - 39 - 47 - 58 - 4;
+				} else {
+					threshold_lines = threshold_lines - 29 - 35 - 43 - 4;
+				}
+			} else {
+				if (yres > 3216) {
+					threshold_lines = threshold_lines - 47 - 58 - 4;
+				} else {
+					threshold_lines = threshold_lines - 35 - 43 - 4;
+				}
+			}
+		}
+#endif
+
 		SDE_DEBUG_CMDENC(cmd_enc, "slow:%d default:%d extra:%d(ns)\n",
 			slow_time_ns, default_time_ns, extra_time_ns);
 		SDE_DEBUG_CMDENC(cmd_enc, "extra_lines:%d threshold:%d\n",
@@ -989,6 +1107,17 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc,
 
 exit:
 	threshold_lines += DEFAULT_TEARCHECK_SYNC_THRESH_START;
+
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/01, Add for qsync tearing issue debug */
+		SDE_DEBUG_CMDENC(cmd_enc, "kVRR : qsync_mode %d, qsync_minfps %d, threshold_lines %d\n",
+			qsync_mode, sde_connector_get_qsync_dynamic_min_fps(conn), threshold_lines);
+		SDE_ATRACE_END("get_tearcheck_threshold");
+		SDE_ATRACE_INT("threshold_lines", threshold_lines);
+	}
+#endif /* OPLUS_FEATURE_ADFR */
 
 	return threshold_lines;
 }
@@ -1367,6 +1496,9 @@ static int sde_encoder_phys_cmd_prepare_for_kickoff(
 			to_sde_encoder_phys_cmd(phys_enc);
 	int ret = 0;
 	u32 extra_frame_trigger_time;
+#ifdef OPLUS_FEATURE_ADFR
+	struct sde_connector *c_conn = NULL;
+#endif /*OPLUS_FEATURE_ADFR*/
 
 	if (!phys_enc || !phys_enc->hw_pp) {
 		SDE_ERROR("invalid encoder\n");
@@ -1395,6 +1527,39 @@ static int sde_encoder_phys_cmd_prepare_for_kickoff(
 		}
 	}
 
+#ifdef OPLUS_FEATURE_ADFR
+	/* Lauwo.Zhong@MM.Display.LCD.Feature,2021-01-16 fixed qsync window and panel min fps nonsynchronous issue */
+	if (oplus_adfr_is_support()) {
+		c_conn = to_sde_connector(phys_enc->connector);
+		/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/02/01, Add for qsync tearing issue */
+		oplus_adfr_force_qsync_mode_off(phys_enc->connector);
+		if (c_conn->qsync_deferred_window_status == DEFERRED_WINDOW_START) {
+			/* window should be set in the next frame since ddic cmd take effect */
+			c_conn->qsync_deferred_window_status = DEFERRED_WINDOW_NEXT_FRAME;
+		} else if (c_conn->qsync_deferred_window_status == DEFERRED_WINDOW_NEXT_FRAME ||
+					/* ZhongLiuhe@MULTIMEDIA.DISPLAY.LCD.FEATURE, 2021/01/27, Modify for closing window immediately when qsync off */
+					c_conn->qsync_deferred_window_status == SET_WINDOW_IMMEDIATELY) {
+			SDE_ATRACE_BEGIN("update_qsync");
+			c_conn->qsync_dynamic_min_fps = c_conn->qsync_curr_dynamic_min_fps;
+			tc_cfg.sync_threshold_start =
+				_get_tearcheck_threshold(phys_enc,
+					&extra_frame_trigger_time);
+			if (phys_enc->has_intf_te &&
+					phys_enc->hw_intf->ops.update_tearcheck)
+				phys_enc->hw_intf->ops.update_tearcheck(
+						phys_enc->hw_intf, &tc_cfg);
+			else if (phys_enc->hw_pp->ops.update_tearcheck)
+				phys_enc->hw_pp->ops.update_tearcheck(
+						phys_enc->hw_pp, &tc_cfg);
+			SDE_EVT32(DRMID(phys_enc->parent), tc_cfg.sync_threshold_start);
+			c_conn->qsync_updated = true;
+			phys_enc->qsync_sync_threshold_start = tc_cfg.sync_threshold_start;
+			phys_enc->current_sync_threshold_start = phys_enc->qsync_sync_threshold_start;
+			c_conn->qsync_deferred_window_status = DEFERRED_WINDOW_END;
+			SDE_ATRACE_END("update_qsync");
+		}
+	} else {
+#endif /* OPLUS_FEATURE_ADFR */
 	if (sde_connector_is_qsync_updated(phys_enc->connector)) {
 		tc_cfg.sync_threshold_start =
 			_get_tearcheck_threshold(phys_enc,
@@ -1408,6 +1573,15 @@ static int sde_encoder_phys_cmd_prepare_for_kickoff(
 					phys_enc->hw_pp, &tc_cfg);
 		SDE_EVT32(DRMID(phys_enc->parent), tc_cfg.sync_threshold_start);
 	}
+
+#ifdef OPLUS_FEATURE_ADFR
+	}
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	// without qsync updated, update qsync window still if qsync enable
+	if (oplus_adfr_is_support()) {
+		oplus_adfr_adjust_tearcheck_for_dynamic_qsync(phys_enc);
+	}
+#endif /* OPLUS_FEATURE_ADFR */
 
 	SDE_DEBUG_CMDENC(cmd_enc, "pp:%d pending_cnt %d\n",
 			phys_enc->hw_pp->idx - PINGPONG_0,
@@ -1881,7 +2055,14 @@ static void sde_encoder_phys_cmd_trigger_start(
 		return;
 
 	/* we don't issue CTL_START when using autorefresh */
+#if defined(OPLUS_FEATURE_PXLW_IRIS5)
+	if (iris_get_feature() && iris_secondary_display_autorefresh(phys_enc))
+		frame_cnt = 1;
+	else
+		frame_cnt = _sde_encoder_phys_cmd_get_autorefresh_property(phys_enc);
+#else
 	frame_cnt = _sde_encoder_phys_cmd_get_autorefresh_property(phys_enc);
+#endif
 	if (frame_cnt) {
 		_sde_encoder_phys_cmd_config_autorefresh(phys_enc, frame_cnt);
 		atomic_inc(&cmd_enc->autorefresh.kickoff_cnt);
@@ -2056,6 +2237,15 @@ struct sde_encoder_phys *sde_encoder_phys_cmd_init(
 	for (i = 0; i < MAX_TE_PROFILE_COUNT; i++)
 		list_add(&cmd_enc->te_timestamp[i].list,
 				&cmd_enc->te_timestamp_list);
+
+#ifdef OPLUS_FEATURE_ADFR
+	/* CaiHuiyue@MULTIMEDIA, 2020/9/24, qsync enhance */
+	if (oplus_adfr_is_support()) {
+		atomic_set(&phys_enc->frame_state, 0);
+		phys_enc->current_sync_threshold_start = 0;
+		phys_enc->qsync_sync_threshold_start = 0;
+	}
+#endif
 
 	SDE_DEBUG_CMDENC(cmd_enc, "created\n");
 

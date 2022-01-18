@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, Oplus. All rights reserved.
  */
 
 #include <linux/device.h>
@@ -133,7 +134,8 @@ static int cam_cpas_util_path_type_to_idx(uint32_t *path_data_type)
 
 	return 0;
 }
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*add by Fangyan @Cam.Drv ,2020/03/02, case id :04467032*/
 static int cam_cpas_update_camnoc_node(struct cam_cpas *cpas_core,
 	struct device_node *curr_node,
 	struct cam_cpas_tree_node *cpas_node_ptr,
@@ -174,6 +176,7 @@ static int cam_cpas_update_camnoc_node(struct cam_cpas *cpas_core,
 	}
 	return 0;
 }
+#endif
 
 static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 	struct device_node *of_node, struct cam_cpas_private_soc *soc_private)
@@ -183,7 +186,11 @@ static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 	struct device_node *curr_node;
 	struct device_node *parent_node;
 	struct device_node *mnoc_node;
-	int mnoc_idx = 0, camnoc_idx = 0;
+	int mnoc_idx = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*add by Fangyan @Cam.Drv ,2020/03/02, case id :04467032*/
+	int camnoc_idx = 0;
+#endif
 	uint32_t path_idx;
 	bool camnoc_max_needed = false;
 	struct cam_cpas_tree_node *curr_node_ptr = NULL;
@@ -289,6 +296,8 @@ static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 				cpas_core->num_axi_ports++;
 			}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			/*add by Fangyan @Cam.Drv ,2020/03/02, case id :04467032*/
 			if (!soc_private->control_camnoc_axi_clk) {
 				rc = cam_cpas_update_camnoc_node(
 					cpas_core, curr_node, curr_node_ptr,
@@ -299,7 +308,7 @@ static int cam_cpas_parse_node_tree(struct cam_cpas *cpas_core,
 					return rc;
 				}
 			}
-
+#endif
 			rc = of_property_read_string(curr_node,
 				"client-name", &client_name);
 			if (!rc) {
